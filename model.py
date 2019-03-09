@@ -4,6 +4,10 @@ import utils
 from reader import Reader
 from discriminator import Discriminator
 from generator import Generator
+from image_shifter import ImageShifter
+import numpy as np
+import random
+import time
 
 REAL_LABEL = 0.9
 
@@ -17,6 +21,7 @@ class CycleGAN:
                norm='instance',
                lambda1=10,
                lambda2=10,
+               lamda_shift=1,
                learning_rate=2e-4,
                beta1=0.5,
                ngf=64
@@ -29,6 +34,7 @@ class CycleGAN:
       image_size: integer, image size
       lambda1: integer, weight for forward cycle loss (X->Y->X)
       lambda2: integer, weight for backward cycle loss (Y->X->Y)
+      lambda_shift: floating, weight of shift loss function
       use_lsgan: boolean
       norm: 'instance' or 'batch'
       learning_rate: float, initial learning rate for Adam
@@ -177,4 +183,34 @@ class CycleGAN:
     forward_loss = tf.reduce_mean(tf.abs(F(G(x))-x))
     backward_loss = tf.reduce_mean(tf.abs(G(F(y))-y))
     loss = self.lambda1*forward_loss + self.lambda2*backward_loss
+    return loss
+
+  def shift_loss(self,G,F,x,y, net_downsampling_factor):
+    """
+    shift loss according to VR-goggle
+    """
+    # we send here a batch already, imageShifter initialized with the same
+    #sample size as batch size
+
+    currTime = time.time()
+    random.seed(currTime)
+    y_dummy = np.empty((x.shape[0],1))
+    imageShifter = ImageShifter(x, y_dummy, net_downsampling_factor)
+    X_batch_shifted, y_batch = imageShifter.getBatch(x.shape[0])
+    random.seed(currTime)
+    imageShifter = ImageShifter(G(x), y_dummy, net_downsampling_factor)
+    Gx_batch_shifted, y_batch = imageShifter.getBatch(x.shape[0])
+    forward_shift_loss=tf.reduce_mean(tf.square(Gx_batch_shifted-X_batch_shifted))
+
+    currTime = time.time()
+    random.seed(currTime)
+    y_dummy = np.empty((y.shape[0], 1))
+    imageShifter = ImageShifter(y, y_dummy, net_downsampling_factor)
+    Y_batch_shifted, y_batch = imageShifter.getBatch(y.shape[0])
+    random.seed(currTime)
+    imageShifter = ImageShifter(F(y), y_dummy, net_downsampling_factor)
+    Fy_batch_shifted, y_batch = imageShifter.getBatch(x.shape[0])
+    backward_shift_loss = tf.reduce_mean(tf.square(Fy_batch_shifted - Y_batch_shifted))
+
+    loss =self.lambda_shift*(forward_shift_loss +backward_shift_loss)
     return loss
